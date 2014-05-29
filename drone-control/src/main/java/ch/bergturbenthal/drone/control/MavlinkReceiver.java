@@ -1,12 +1,11 @@
 package ch.bergturbenthal.drone.control;
 
-import java.util.Collection;
 import java.util.Map;
 
 import org.mavlink.messages.MAVLinkMessage;
 
 public interface MavlinkReceiver {
-	public Collection<DroneAddress> listOnlineDrones();
+	public Map<DroneAddress, Drone> listKnownDrones();
 
 	public Map<String, Number> readMessageCounters();
 

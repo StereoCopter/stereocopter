@@ -1,11 +1,11 @@
 package ch.bergturbenthal.drone.control;
 
-import java.net.InetAddress;
+import java.net.SocketAddress;
 
 import lombok.Value;
 
 @Value
 public class DroneAddress {
-	private InetAddress gatewayAddress;
+	private SocketAddress gatewayAddress;
 	private int systemId;
 }
