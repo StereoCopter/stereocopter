@@ -47,8 +47,8 @@ typedef struct cam_t {
 
 cam_t* init_dev(const char* name) {
 	cam_t* dev = calloc(1, sizeof(cam_t));
-	dev->buffers = calloc(1, sizeof(*dev->buffers));	
-	dev->fd = -1; 
+	dev->buffers = calloc(1, sizeof(*dev->buffers));
+	dev->fd = -1;
 	dev->dev_name=strdup(name);
 
 	return dev;
@@ -78,13 +78,13 @@ static int xioctl(int fh, int request, void *arg)
 
 static void process_image(cam_t* dev, const void *p, int size)
 {
-	printf("Frame: %d\n", dev->frame_number);
+	printf("Cam: %d, Frame: %d\n", dev->fd, dev->frame_number);
         dev->frame_number++;
-        char filename[15];
-        sprintf(filename, "frame-%d.raw", dev->frame_number);
+        char filename[32];
+        sprintf(filename, "cam-%d-frame-%d.raw", dev->fd, dev->frame_number);
         FILE *fp=fopen(filename,"wb");
 
-                fwrite(p, size, 1, fp);
+        fwrite(p, size, 1, fp);
 
         fflush(fp);
         fclose(fp);
@@ -396,9 +396,9 @@ static void open_device(cam_t* dev)
         }
 }
 
-int main(int argc, char **argv)
+static void* cam_thread(void* arg)
 {
-	cam_t* dev = init_dev("/dev/video0");	
+	cam_t* dev = init_dev((const char*)arg);
 
         open_device(dev);
         init_device(dev);
@@ -409,7 +409,21 @@ int main(int argc, char **argv)
         close_device(dev);
         fprintf(stderr, "\n");
 
-
 	free_dev(dev);
+
+	return 0;
+}
+
+int main(int argc, char **argv)
+{
+	pthread_t cam0, cam1;
+
+
+	pthread_create(&cam0, 0, cam_thread, "/dev/video0");
+	pthread_create(&cam1, 0, cam_thread, "/dev/video1");
+
+	pthread_join(cam0);
+	pthread_join(cam1);
+
         return 0;
 }
