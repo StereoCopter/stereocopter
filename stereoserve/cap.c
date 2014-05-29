@@ -31,11 +31,6 @@
 #define V4L2_PIX_FMT_H264     v4l2_fourcc('H', '2', '6', '4') /* H264 with start codes */
 #endif
 
-enum io_method {
-        IO_METHOD_READ,
-        IO_METHOD_MMAP,
-        IO_METHOD_USERPTR,
-};
 
 struct buffer {
         void   *start;
@@ -43,12 +38,9 @@ struct buffer {
 };
 
 static char            *dev_name;
-static enum io_method   io = IO_METHOD_MMAP;
 static int              fd = -1;
 struct buffer          *buffers;
 static unsigned int     n_buffers;
-static int              out_buf;
-static int              force_format;
 static int              frame_count = 200;
 static int              frame_number = 0;
 
@@ -89,9 +81,6 @@ static int read_frame(void)
         struct v4l2_buffer buf;
         unsigned int i;
 
-        switch (io) {
-
-        case IO_METHOD_MMAP:
                 CLEAR(buf);
 
                 buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -119,8 +108,6 @@ static int read_frame(void)
 
                 if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
                         errno_exit("VIDIOC_QBUF");
-                break;
-        }
 
         return 1;
 }
@@ -168,18 +155,9 @@ static void stop_capturing(void)
 {
         enum v4l2_buf_type type;
 
-        switch (io) {
-        case IO_METHOD_READ:
-                /* Nothing to do. */
-                break;
-
-        case IO_METHOD_MMAP:
-        case IO_METHOD_USERPTR:
                 type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
                 if (-1 == xioctl(fd, VIDIOC_STREAMOFF, &type))
                         errno_exit("VIDIOC_STREAMOFF");
-                break;
-        }
 }
 
 static void start_capturing(void)
@@ -187,12 +165,6 @@ static void start_capturing(void)
         unsigned int i;
         enum v4l2_buf_type type;
 
-        switch (io) {
-        case IO_METHOD_READ:
-                /* Nothing to do. */
-                break;
-
-        case IO_METHOD_MMAP:
                 for (i = 0; i < n_buffers; ++i) {
                         struct v4l2_buffer buf;
 
@@ -207,49 +179,15 @@ static void start_capturing(void)
                 type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
                 if (-1 == xioctl(fd, VIDIOC_STREAMON, &type))
                         errno_exit("VIDIOC_STREAMON");
-                break;
-
-        case IO_METHOD_USERPTR:
-                for (i = 0; i < n_buffers; ++i) {
-                        struct v4l2_buffer buf;
-
-                        CLEAR(buf);
-                        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-                        buf.memory = V4L2_MEMORY_USERPTR;
-                        buf.index = i;
-                        buf.m.userptr = (unsigned long)buffers[i].start;
-                        buf.length = buffers[i].length;
-
-                        if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
-                                errno_exit("VIDIOC_QBUF");
-                }
-                type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-                if (-1 == xioctl(fd, VIDIOC_STREAMON, &type))
-                        errno_exit("VIDIOC_STREAMON");
-                break;
-        }
 }
 
 static void uninit_device(void)
 {
         unsigned int i;
 
-        switch (io) {
-        case IO_METHOD_READ:
-                free(buffers[0].start);
-                break;
-
-        case IO_METHOD_MMAP:
                 for (i = 0; i < n_buffers; ++i)
                         if (-1 == munmap(buffers[i].start, buffers[i].length))
                                 errno_exit("munmap");
-                break;
-
-        case IO_METHOD_USERPTR:
-                for (i = 0; i < n_buffers; ++i)
-                        free(buffers[i].start);
-                break;
-        }
 
         free(buffers);
 }
@@ -392,24 +330,11 @@ static void init_device(void)
                 exit(EXIT_FAILURE);
         }
 
-        switch (io) {
-        case IO_METHOD_READ:
-                if (!(cap.capabilities & V4L2_CAP_READWRITE)) {
-                        fprintf(stderr, "%s does not support read i/o\n",
-                                 dev_name);
-                        exit(EXIT_FAILURE);
-                }
-                break;
-
-        case IO_METHOD_MMAP:
-        case IO_METHOD_USERPTR:
                 if (!(cap.capabilities & V4L2_CAP_STREAMING)) {
                         fprintf(stderr, "%s does not support streaming i/o\n",
                                  dev_name);
                         exit(EXIT_FAILURE);
                 }
-                break;
-        }
 
 
         /* Select video input, video standard and tune here. */
@@ -441,22 +366,15 @@ static void init_device(void)
         CLEAR(fmt);
 
         fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        if (force_format | 1) {
-	fprintf(stderr, "Set H264\r\n");
-                fmt.fmt.pix.width       = 640; //replace
-                fmt.fmt.pix.height      = 460; //replace
-                fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_MJPEG; //replace
-                fmt.fmt.pix.field       = V4L2_FIELD_ANY;
 
-                if (-1 == xioctl(fd, VIDIOC_S_FMT, &fmt))
-                        errno_exit("VIDIOC_S_FMT");
+        fmt.fmt.pix.width       = 640; //replace
+        fmt.fmt.pix.height      = 460; //replace
+        fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_MJPEG; //replace
+        fmt.fmt.pix.field       = V4L2_FIELD_ANY;
 
-                /* Note VIDIOC_S_FMT may change width and height. */
-        } else {
-                /* Preserve original settings as set by v4l2-ctl for example */
-                if (-1 == xioctl(fd, VIDIOC_G_FMT, &fmt))
-                        errno_exit("VIDIOC_G_FMT");
-        }
+        if (-1 == xioctl(fd, VIDIOC_S_FMT, &fmt))
+        	errno_exit("VIDIOC_S_FMT");
+
 
         /* Buggy driver paranoia. */
         min = fmt.fmt.pix.width * 2;
@@ -466,19 +384,7 @@ static void init_device(void)
         if (fmt.fmt.pix.sizeimage < min)
                 fmt.fmt.pix.sizeimage = min;
 
-        switch (io) {
-        case IO_METHOD_READ:
-                init_read(fmt.fmt.pix.sizeimage);
-                break;
-
-        case IO_METHOD_MMAP:
                 init_mmap();
-                break;
-
-        case IO_METHOD_USERPTR:
-                init_userp(fmt.fmt.pix.sizeimage);
-                break;
-        }
 }
 
 static void close_device(void)
@@ -572,25 +478,6 @@ int main(int argc, char **argv)
                         usage(stdout, argc, argv);
                         exit(EXIT_SUCCESS);
 
-                case 'm':
-                        io = IO_METHOD_MMAP;
-                        break;
-
-                case 'r':
-                        io = IO_METHOD_READ;
-                        break;
-
-                case 'u':
-                        io = IO_METHOD_USERPTR;
-                        break;
-
-                case 'o':
-                        out_buf++;
-                        break;
-
-                case 'f':
-                        force_format++;
-                        break;
 
                 case 'c':
                         errno = 0;
