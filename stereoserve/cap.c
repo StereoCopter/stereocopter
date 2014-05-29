@@ -24,6 +24,9 @@
 #include <sys/ioctl.h>
 
 #include <linux/videodev2.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
 
@@ -31,6 +34,7 @@
 #define V4L2_PIX_FMT_H264     v4l2_fourcc('H', '2', '6', '4') /* H264 with start codes */
 #endif
 
+int psync[4];
 
 typedef struct buffer {
         void   *start;
@@ -39,16 +43,18 @@ typedef struct buffer {
 
 typedef struct cam_t {
 	char            *dev_name;
+	int 		 id;
 	int              fd;
 	struct buffer          *buffers;
 	unsigned int     n_buffers;
 	int              frame_number;
 } cam_t;
 
-cam_t* init_dev(const char* name) {
+cam_t* init_dev(int id, const char* name) {
 	cam_t* dev = calloc(1, sizeof(cam_t));
 	dev->buffers = calloc(1, sizeof(*dev->buffers));
 	dev->fd = -1;
+	dev->id = id;
 	dev->dev_name=strdup(name);
 
 	return dev;
@@ -65,6 +71,56 @@ static void errno_exit(const char *s)
         exit(EXIT_FAILURE);
 }
 
+#define SLICE_SIZE 512
+
+int sockfd;
+struct sockaddr_in servaddr;
+char temp[2048];
+
+void init_net(const char* host) {
+	sockfd=socket(AF_INET,SOCK_DGRAM,0);
+
+	servaddr.sin_family = AF_INET;
+	servaddr.sin_addr.s_addr=inet_addr(host);
+	servaddr.sin_port=htons(9001);
+}
+
+void send_slice(int cam, int ts, int sn, int sc, int total, const void* data, int len) {
+	char* p  = temp;
+	#define w32(x) (*(int*)p)=x; p+=4;
+
+	w32(cam);
+	w32(ts);
+	w32(SLICE_SIZE);
+	w32(sn);
+	w32(sc);
+	w32(total);
+	w32(len);
+
+	memcpy(p, data, len);
+	p+= len;
+
+	sendto(sockfd,temp,p-temp,0,(struct sockaddr *)&servaddr,sizeof(servaddr));
+}
+
+void send_full(int cam, int ts, const void* data, int len) {
+
+	const char* p = (const char*)data;
+
+	int sc = (len+SLICE_SIZE-1)/SLICE_SIZE;
+	int sn = 0;
+
+	int rem = len;
+
+	while(rem > 0) {
+		int cnt = rem > SLICE_SIZE? SLICE_SIZE : rem;
+		send_slice(cam, ts, sn, sc, len, p, cnt);
+		p += cnt;
+		rem -= cnt;
+		sn ++;
+	}
+}
+
 static int xioctl(int fh, int request, void *arg)
 {
         int r;
@@ -78,16 +134,20 @@ static int xioctl(int fh, int request, void *arg)
 
 static void process_image(cam_t* dev, const void *p, int size)
 {
-	printf("Cam: %d, Frame: %d\n", dev->fd, dev->frame_number);
+	printf("Cam: %d, Frame: %d\n", dev->id, dev->frame_number);
         dev->frame_number++;
+	send_full(dev->id, dev->frame_number, p, size);
+/*
         char filename[32];
         sprintf(filename, "cam-%d-frame-%d.raw", dev->fd, dev->frame_number);
-        FILE *fp=fopen(filename,"wb");
+  
+      FILE *fp=fopen(filename,"wb");
 
         fwrite(p, size, 1, fp);
 
         fflush(fp);
         fclose(fp);
+*/
 }
 
 static int read_frame(cam_t* dev)
@@ -128,10 +188,6 @@ static int read_frame(cam_t* dev)
 
 static void mainloop(cam_t* dev)
 {
-        unsigned int count;
-
-//        count = dev->frame_count;
-
 	for(;;) {
                 for (;;) {
                         fd_set fds;
@@ -157,6 +213,7 @@ static void mainloop(cam_t* dev)
                                 fprintf(stderr, "select timeout\n");
                                 exit(EXIT_FAILURE);
                         }
+
 
                         if (read_frame(dev))
                                 break;
@@ -190,6 +247,19 @@ static void start_capturing(cam_t* dev)
                         if (-1 == xioctl(dev->fd, VIDIOC_QBUF, &buf))
                                 errno_exit("VIDIOC_QBUF");
                 }
+
+		//perhaps abusing pipes for sync ins't the best idea
+		//but i cba right now
+		{
+			int t=1;
+			printf("cam: %d ready\n", dev->id);
+			write(psync[1], &t, 1);
+			struct pollfd pt={0};
+			pt.fd = psync[2];
+			pt.events = POLLIN;
+			poll(&pt, 1, -1);
+		}
+
                 type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
                 if (-1 == xioctl(dev->fd, VIDIOC_STREAMON, &type))
                         errno_exit("VIDIOC_STREAMON");
@@ -396,9 +466,11 @@ static void open_device(cam_t* dev)
         }
 }
 
+const char* cams[] = { "/dev/video1", "/dev/video0" };
+
 static void* cam_thread(void* arg)
 {
-	cam_t* dev = init_dev((const char*)arg);
+	cam_t* dev = init_dev((int)arg, cams[(int)arg] );
 
         open_device(dev);
         init_device(dev);
@@ -414,16 +486,33 @@ static void* cam_thread(void* arg)
 	return 0;
 }
 
+
 int main(int argc, char **argv)
 {
+	init_net(argc==1? "192.168.137.1" : argv[1]);
+
+	pipe(psync+0);
+	pipe(psync+2);
+
 	pthread_t cam0, cam1;
 
 
-	pthread_create(&cam0, 0, cam_thread, "/dev/video0");
-	pthread_create(&cam1, 0, cam_thread, "/dev/video1");
+	pthread_create(&cam0, 0, cam_thread, 0);
+	pthread_create(&cam1, 0, cam_thread, 1);
+
+
+	printf("Waiting for cameras ..\n");
+	int t;
+	read(psync[0], &t, 1);
+	read(psync[0], &t, 1);
+
+	printf("GOGOGO!\n");
+
+	write(psync[3], &t, 1);
 
 	pthread_join(cam0);
 	pthread_join(cam1);
+
 
         return 0;
 }
