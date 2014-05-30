@@ -27,6 +27,7 @@
 #include <poll.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <time.h>
 
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
 
@@ -75,7 +76,6 @@ static void errno_exit(const char *s)
 
 int sockfd;
 struct sockaddr_in servaddr;
-char temp[2048];
 
 void init_net(const char* host) {
 	sockfd=socket(AF_INET,SOCK_DGRAM,0);
@@ -83,14 +83,20 @@ void init_net(const char* host) {
 	servaddr.sin_family = AF_INET;
 	servaddr.sin_addr.s_addr=inet_addr(host);
 	servaddr.sin_port=htons(9001);
+
+	int broadcastEnable=1;
+	int ret=setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &broadcastEnable, sizeof(broadcastEnable));
+
 }
 
-void send_slice(int cam, int ts, int sn, int sc, int total, const void* data, int len) {
+void send_slice(int cam,struct timespec ts, int sn, int sc, int total, const void* data, int len) {
+	char temp[2048] = { 0 };
 	char* p  = temp;
 	#define w32(x) (*(int*)p)=x; p+=4;
 
 	w32(cam);
-	w32(ts);
+	w32(ts.tv_sec);
+	w32(ts.tv_nsec);
 	w32(SLICE_SIZE);
 	w32(sn);
 	w32(sc);
@@ -103,7 +109,9 @@ void send_slice(int cam, int ts, int sn, int sc, int total, const void* data, in
 	sendto(sockfd,temp,p-temp,0,(struct sockaddr *)&servaddr,sizeof(servaddr));
 }
 
-void send_full(int cam, int ts, const void* data, int len) {
+void send_full(int cam, const void* data, int len) {
+	struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC_RAW,&ts);
 
 	const char* p = (const char*)data;
 
@@ -136,7 +144,7 @@ static void process_image(cam_t* dev, const void *p, int size)
 {
 	printf("Cam: %d, Frame: %d\n", dev->id, dev->frame_number);
         dev->frame_number++;
-	send_full(dev->id, dev->frame_number, p, size);
+	send_full(dev->id, p, size);
 /*
         char filename[32];
         sprintf(filename, "cam-%d-frame-%d.raw", dev->fd, dev->frame_number);
