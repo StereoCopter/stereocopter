@@ -19,21 +19,21 @@ import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 
 import lombok.Getter;
-import lombok.RequiredArgsConstructor;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 
-import org.apache.tomcat.util.buf.HexUtils;
 import org.mavlink.MAVLinkReader;
 import org.mavlink.messages.MAVLinkMessage;
 import org.mavlink.messages.MAV_AUTOPILOT;
 import org.mavlink.messages.MAV_MOUNT_MODE;
 import org.mavlink.messages.MAV_TYPE;
+import org.mavlink.messages.ja4rtor.msg_attitude;
 import org.mavlink.messages.ja4rtor.msg_gps_status;
 import org.mavlink.messages.ja4rtor.msg_heartbeat;
 import org.mavlink.messages.ja4rtor.msg_mount_configure;
 import org.mavlink.messages.ja4rtor.msg_mount_control;
 import org.mavlink.messages.ja4rtor.msg_mount_status;
+import org.mavlink.messages.ja4rtor.msg_request_data_stream;
 import org.mavlink.messages.ja4rtor.msg_servo_output_raw;
 import org.mavlink.messages.ja4rtor.msg_set_mode;
 import org.springframework.beans.factory.annotation.Value;
@@ -43,16 +43,31 @@ import org.springframework.stereotype.Component;
 @Component
 @Slf4j
 public class MulticastReceiverImpl implements Runnable, Closeable, MavlinkReceiver {
-
-	@RequiredArgsConstructor
 	private class DroneImpl implements Drone {
 		private final DroneAddress droneAddress;
-
 		@Getter
 		@Setter
 		private Date lastHeartbeat;
+
 		private final AtomicInteger sequenceNumber = new AtomicInteger();
 		int currentMountMode = -1;
+
+		public DroneImpl(final DroneAddress droneAddress) {
+			this.droneAddress = droneAddress;
+			final msg_request_data_stream request_data_stream = new msg_request_data_stream();
+			for (int stream_id = 1; stream_id < 12; stream_id++) {
+				request_data_stream.req_stream_id = stream_id;
+				request_data_stream.req_message_rate = 200;
+				request_data_stream.start_stop = 0;
+				request_data_stream.target_system = droneAddress.getSystemId();
+				request_data_stream.target_component = droneAddress.getSystemId();
+				send(request_data_stream);
+			}
+			final msg_mount_status mount_status = new msg_mount_status();
+			mount_status.target_system = droneAddress.getSystemId();
+			mount_status.componentId = droneAddress.getSystemId();
+			send(mount_status);
+		}
 
 		@Override
 		public boolean isAlive() {
@@ -82,16 +97,18 @@ public class MulticastReceiverImpl implements Runnable, Closeable, MavlinkReceiv
 		public void setMountTarget(final double pitch, final double yaw, final double roll) {
 			if (currentMountMode != MAV_MOUNT_MODE.MAV_MOUNT_MODE_MAVLINK_TARGETING) {
 				final msg_mount_configure mount_configure = new msg_mount_configure();
-				mount_configure.mount_mode = MAV_MOUNT_MODE.MAV_MOUNT_MODE_MAVLINK_TARGETING;
+				mount_configure.mount_mode = MAV_MOUNT_MODE.MAV_MOUNT_MODE_GPS_POINT;
 				mount_configure.target_component = droneAddress.getSystemId();
 				mount_configure.target_system = droneAddress.getSystemId();
 				send(mount_configure);
+				currentMountMode = MAV_MOUNT_MODE.MAV_MOUNT_MODE_MAVLINK_TARGETING;
 			}
 			final msg_mount_control mount_control = new msg_mount_control();
 			mount_control.input_a = (long) (pitch * 100);
 			mount_control.input_b = (long) (roll * 100);
 			mount_control.input_c = (long) (yaw * 100);
-			mount_control.target_component = droneAddress.getSystemId();
+			mount_control.save_position = 0;
+			mount_control.target_component = 0;
 			mount_control.target_system = droneAddress.getSystemId();
 			send(mount_control);
 		}
@@ -101,11 +118,13 @@ public class MulticastReceiverImpl implements Runnable, Closeable, MavlinkReceiv
 				message.sequence = sequenceNumber.incrementAndGet();
 				message.sysId = mySystemId;
 				message.componentId = myComponentId;
-				System.out.println("Send: " + message);
+				if (!(message instanceof msg_heartbeat)) {
+					log.debug("Send: " + message);
+				}
 				final byte[] encodedPacket = message.encode();
-				System.out.println("Hex: " + HexUtils.toHexString(encodedPacket));
+				// System.out.println("Hex: " + HexUtils.toHexString(encodedPacket));
 				final DatagramPacket packet = new DatagramPacket(encodedPacket, encodedPacket.length, droneAddress.getGatewayAddress());
-				System.out.println("Send Packet: " + packet.getSocketAddress());
+				// System.out.println("Send Packet: " + packet.getSocketAddress());
 				multicastSocket.send(packet);
 			} catch (final IOException e) {
 				throw new RuntimeException("Cannot send message " + message, e);
@@ -114,6 +133,7 @@ public class MulticastReceiverImpl implements Runnable, Closeable, MavlinkReceiv
 	}
 
 	private final ConcurrentMap<String, AtomicInteger> countByMessage = new ConcurrentHashMap<String, AtomicInteger>();
+
 	private final ConcurrentMap<DroneAddress, DroneImpl> droneHandlers = new ConcurrentHashMap<DroneAddress, DroneImpl>();
 	private final Map<String, MAVLinkMessage> lastMessageByType = new ConcurrentHashMap<String, MAVLinkMessage>();
 	@Value("${mavlink.multicastAddress}")
@@ -166,6 +186,7 @@ public class MulticastReceiverImpl implements Runnable, Closeable, MavlinkReceiv
 				MAVLinkMessage message = reader.getNextMessage(packet.getData(), packet.getLength());
 				while (message != null) {
 					final DroneAddress droneAddress = new DroneAddress(packet.getSocketAddress(), message.sysId);
+					// log.debug("Message: " + message);
 					if (message instanceof msg_heartbeat) {
 						final msg_heartbeat heartbeatMessage = (msg_heartbeat) message;
 						// System.out.println(heartbeatMessage.sysId);
@@ -188,6 +209,15 @@ public class MulticastReceiverImpl implements Runnable, Closeable, MavlinkReceiv
 					}
 					if (message instanceof msg_servo_output_raw) {
 						// log.info("Servo Output " + message);
+					}
+
+					if (message instanceof msg_attitude) {
+						final msg_attitude attitude = (msg_attitude) message;
+						final float pitch = attitude.pitch;
+						final float roll = attitude.roll;
+						final float yaw = attitude.yaw;
+
+						// log.info("Attitude: " + yaw + "," + roll + "," + pitch);
 					}
 
 					final String messageName = message.getClass().getSimpleName();

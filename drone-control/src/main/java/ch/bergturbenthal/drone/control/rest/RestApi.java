@@ -41,7 +41,7 @@ public class RestApi {
 	@RequestMapping("setCameraDirection")
 	public void setCameraDirection() {
 		for (final Drone drone : receiver.listKnownDrones().values()) {
-			drone.setMountTarget(0, 0, 0);
+			drone.setMountTarget(45, 45, 45);
 		}
 	}
 
