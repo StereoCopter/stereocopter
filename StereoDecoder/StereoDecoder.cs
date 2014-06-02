@@ -59,7 +59,8 @@ namespace WindowsFormsApplication1
 
         public class CameraImage
         {
-            public int ts, id, missing;
+            public long ts;
+            public int id, missing;
             public byte[] data;
         }
 
@@ -96,8 +97,8 @@ namespace WindowsFormsApplication1
             
                 var bmp = Image.FromStream(ms);
 
-                bmp.RotateFlip(RotateFlipType.Rotate270FlipNone);
-                (img.id == 0 ? pb0 : pb1).BackgroundImage = bmp;
+                bmp.RotateFlip(RotateFlipType.Rotate90FlipNone);
+                (img.id == cswi ? pb0 : pb1).BackgroundImage = bmp;
             }
             catch (Exception ex) { }
         }
@@ -108,6 +109,10 @@ namespace WindowsFormsApplication1
             InitializeComponent();
 
             d = new UdpClient(9001);
+
+
+            d.EnableBroadcast = true;
+            d.Client.EnableBroadcast = true;
 
             Thread rxt = new Thread(() =>
             {
@@ -122,13 +127,15 @@ namespace WindowsFormsApplication1
                         int p = 0;
 
                         int camid = BitConverter.ToInt32(data, p); p += 4;
-                        int ts = BitConverter.ToInt32(data, p); p += 4;
+                        int ts_s = BitConverter.ToInt32(data, p); p += 4;
+                        int ts_ns = BitConverter.ToInt32(data, p); p += 4;
                         int slice_size = BitConverter.ToInt32(data, p); p += 4;
                         int sn = BitConverter.ToInt32(data, p); p += 4;
                         int sc = BitConverter.ToInt32(data, p); p += 4;
                         int total = BitConverter.ToInt32(data, p); p += 4;
                         int len = BitConverter.ToInt32(data, p); p += 4;
 
+                        long ts = ts_s + (ts_ns * 1000000);
                         byte[] payload = data.Skip(p).ToArray();
 
                         if (payload.Length != len)
@@ -166,8 +173,63 @@ namespace WindowsFormsApplication1
             rxt.Start();
         }
 
+        private void pb1_Click(object sender, EventArgs e)
+        {
 
+        }
 
+        private void pb1_DoubleClick(object sender, EventArgs e)
+        {
+            if (WindowState == FormWindowState.Maximized)
+                WindowState = FormWindowState.Normal;
+            else
+                WindowState = FormWindowState.Maximized;
 
+        }
+
+        int xo = 0;
+        int yo = 0;
+        int cswi = 0;
+
+        void repos()
+        {
+            int p0x = Width * 1 / 4 + xo;
+            int p0y = Height * 1 / 2 + yo;
+
+            int p1x = Width * 3 / 4 - xo;
+            int p1y = Height * 1 / 2 + yo;
+
+            pb0.Left = p0x - pb0.Width / 2;
+            pb0.Top = p0y - pb0.Height / 2;
+
+            pb1.Left = p1x - pb1.Width / 2;
+            pb1.Top = p1y - pb1.Height / 2;
+        }
+
+        private void StereoDecoder_Resize(object sender, EventArgs e)
+        {
+            repos();
+        }
+
+        private void StereoDecoder_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Left)
+                xo--;
+            else if (e.KeyCode == Keys.Right)
+                xo++;
+
+            if (e.KeyCode == Keys.Up)
+                yo--;
+            else if (e.KeyCode == Keys.Down)
+                yo++;
+
+            if (e.KeyCode == Keys.Space)
+                cswi ^= 1;
+
+            if (e.KeyCode == Keys.Escape)
+                pb1_DoubleClick(null, null);
+
+            repos();
+        }
     }
 }

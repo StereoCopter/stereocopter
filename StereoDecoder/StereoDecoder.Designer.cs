@@ -46,21 +46,29 @@
             // pb1
             // 
             this.pb1.Location = new System.Drawing.Point(360, 0);
+            this.pb1.Margin = new System.Windows.Forms.Padding(0);
             this.pb1.Name = "pb1";
             this.pb1.Size = new System.Drawing.Size(360, 640);
             this.pb1.TabIndex = 1;
             this.pb1.TabStop = false;
+            this.pb1.Click += new System.EventHandler(this.pb1_Click);
+            this.pb1.DoubleClick += new System.EventHandler(this.pb1_DoubleClick);
             // 
             // StereoDecoder
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
+            this.BackColor = System.Drawing.Color.Black;
             this.ClientSize = new System.Drawing.Size(720, 640);
             this.Controls.Add(this.pb1);
             this.Controls.Add(this.pb0);
+            this.ForeColor = System.Drawing.Color.White;
             this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.None;
+            this.KeyPreview = true;
             this.Name = "StereoDecoder";
             this.Text = "Stereo Decoder!";
+            this.KeyDown += new System.Windows.Forms.KeyEventHandler(this.StereoDecoder_KeyDown);
+            this.Resize += new System.EventHandler(this.StereoDecoder_Resize);
             ((System.ComponentModel.ISupportInitialize)(this.pb0)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.pb1)).EndInit();
             this.ResumeLayout(false);
